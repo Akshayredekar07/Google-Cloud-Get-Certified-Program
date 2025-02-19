@@ -1,0 +1,31 @@
+1. Granular Access Control: Google Cloud IAM (Identity and Access Management) allows you to define who (user) has what access (role) for which resource, providing fine-grained control over permissions.
+
+2. Predefined Roles: GCP IAM offers predefined roles that bundle permissions to perform specific tasks, making it easier to assign appropriate access levels without having to manage individual permissions.
+
+3. Custom Roles: In addition to predefined roles, GCP IAM allows you to create custom roles tailored to your specific needs, giving you flexibility in managing access control.
+
+4. Audit Logging: GCP IAM integrates with Cloud Audit Logs to provide detailed logs of all access and administrative activities, helping you monitor and ensure compliance with security policies.
+
+
+ natIP: 34.86.5.184
+
+ gcloud container clusters update private-cluster \
+    --enable-master-authorized-networks \
+    --master-authorized-networks 34.86.5.184
+
+
+    gcloud container clusters update private-cluster2 \
+    --enable-master-authorized-networks \
+    --zone=$ZONE \
+    --master-authorized-networks 34.86.5.184/32
+
+
+export CUSTOM_ROLE=orca_storage_editor_642
+export S_A=orca-private-cluster-288-sa
+export CLUSTER=orca-cluster-245
+export ZONE=us-east4-a    
+
+export CUSTOM_ROLE=
+export S_A=
+export CLUSTER=
+export ZONE=
