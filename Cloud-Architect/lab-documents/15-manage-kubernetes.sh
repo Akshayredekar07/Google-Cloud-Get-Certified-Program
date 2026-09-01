@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-# Lab configuration
+# ── Lab configuration ────────────────────────────────────────────────
 export PROJECT_ID="qwiklabs-gcp-02-90fe1db8f438"
 export CLUSTER_NAME="hello-world-l5wq"
 export REGION="europe-west4"
@@ -16,24 +16,31 @@ export INTERVAL="50s"
 gcloud config set project "$PROJECT_ID"
 gcloud config set compute/zone "$ZONE"
 
-# Task 1: Create the GKE cluster
-gcloud container clusters create "$CLUSTER_NAME" \
-  --release-channel regular \
-  --num-nodes 3 \
-  --enable-autoscaling \
-  --min-nodes 2 \
-  --max-nodes 6 \
-  --no-enable-ip-alias
+# ── Task 1: Create the GKE cluster (idempotent) ─────────────────────
+if gcloud container clusters describe "$CLUSTER_NAME" --zone "$ZONE" &>/dev/null; then
+  echo "Cluster $CLUSTER_NAME already exists, skipping creation."
+else
+  gcloud container clusters create "$CLUSTER_NAME" \
+    --zone "$ZONE" \
+    --release-channel regular \
+    --num-nodes 3 \
+    --enable-autoscaling \
+    --min-nodes 2 \
+    --max-nodes 6 \
+    --no-enable-ip-alias
+fi
 
-# Task 2: Enable Managed Prometheus and create the namespace
+gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$ZONE"
+
+# ── Task 2: Enable Managed Prometheus and create the namespace ──────
 gcloud container clusters update "$CLUSTER_NAME" \
   --enable-managed-prometheus \
   --zone "$ZONE"
 
 kubectl create namespace "$NAMESPACE_NAME" --dry-run=client -o yaml | kubectl apply -f -
 
-# Download the Prometheus application manifest
-gcloud storage cp gs://spls/gsp510/prometheus-app.yaml .
+# Download the Prometheus application manifest (skip if already present)
+[ -f prometheus-app.yaml ] || gcloud storage cp gs://spls/gsp510/prometheus-app.yaml .
 
 # Configure the Prometheus application
 cat > prometheus-app.yaml <<'EOF'
@@ -71,7 +78,7 @@ EOF
 kubectl apply -n "$NAMESPACE_NAME" -f prometheus-app.yaml
 
 # Download and configure PodMonitoring
-gcloud storage cp gs://spls/gsp510/pod-monitoring.yaml .
+[ -f pod-monitoring.yaml ] || gcloud storage cp gs://spls/gsp510/pod-monitoring.yaml .
 
 cat > pod-monitoring.yaml <<EOF
 apiVersion: monitoring.googleapis.com/v1alpha1
@@ -91,18 +98,20 @@ EOF
 
 kubectl apply -n "$NAMESPACE_NAME" -f pod-monitoring.yaml
 
-# Task 3: Download and deploy the sample application
-gcloud storage cp -r gs://spls/gsp510/hello-app/ .
-
-gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$ZONE"
+# ── Task 3: Download and deploy the sample application ──────────────
+[ -d hello-app ] || gcloud storage cp -r gs://spls/gsp510/hello-app/ .
 
 kubectl apply -n "$NAMESPACE_NAME" \
   -f hello-app/manifests/helloweb-deployment.yaml
 
-# Task 4: Create the logs-based metric
-gcloud logging metrics create pod-image-errors \
-  --description="Counts Kubernetes pod image errors" \
-  --log-filter='resource.type="k8s_pod" AND severity=WARNING' || true
+# ── Task 4: Create the logs-based metric (idempotent) ────────────────
+if gcloud logging metrics describe pod-image-errors &>/dev/null; then
+  echo "Logs-based metric pod-image-errors already exists, skipping creation."
+else
+  gcloud logging metrics create pod-image-errors \
+    --description="Counts Kubernetes pod image errors" \
+    --log-filter='resource.type="k8s_pod" AND severity=WARNING'
+fi
 
 # Create the alerting policy configuration
 cat > pod-error-alert.json <<'EOF'
@@ -139,10 +148,19 @@ cat > pod-error-alert.json <<'EOF'
 }
 EOF
 
-gcloud alpha monitoring policies create \
-  --policy-from-file="pod-error-alert.json"
+# Only create the alert policy if one with this display name doesn't already exist
+EXISTING_POLICY=$(gcloud alpha monitoring policies list \
+  --filter='displayName="Pod Error Alert"' \
+  --format='value(name)' | head -n1)
 
-# Task 5: Fix the deployment manifest and redeploy
+if [ -n "$EXISTING_POLICY" ]; then
+  echo "Alert policy 'Pod Error Alert' already exists ($EXISTING_POLICY), skipping creation."
+else
+  gcloud alpha monitoring policies create \
+    --policy-from-file="pod-error-alert.json"
+fi
+
+# ── Task 5: Fix the deployment manifest and redeploy ─────────────────
 cd hello-app
 
 cat > manifests/helloweb-deployment.yaml <<'EOF'
@@ -181,7 +199,7 @@ kubectl apply \
   --namespace "$NAMESPACE_NAME" \
   -f manifests/helloweb-deployment.yaml
 
-# Task 6: Update the application to version 2.0.0
+# ── Task 6: Update the application to version 2.0.0 ──────────────────
 cat > main.go <<'EOF'
 package main
 
@@ -217,6 +235,21 @@ EOF
 
 # Configure Docker authentication for Artifact Registry
 gcloud auth configure-docker "$REGION-docker.pkg.dev" --quiet
+
+# ── FIX: ensure the Artifact Registry repo actually exists before pushing ──
+# This is the step that was missing and caused:
+#   "error from registry: Repository "sandbox-repo" not found"
+if gcloud artifacts repositories describe "$REPO_NAME" \
+     --location="$REGION" --project="$PROJECT_ID" &>/dev/null; then
+  echo "Artifact Registry repo $REPO_NAME already exists in $REGION, skipping creation."
+else
+  echo "Artifact Registry repo $REPO_NAME not found in $REGION — creating it now."
+  gcloud artifacts repositories create "$REPO_NAME" \
+    --repository-format=docker \
+    --location="$REGION" \
+    --project="$PROJECT_ID" \
+    --description="Sandbox repo for hello-app images"
+fi
 
 # Build and push the v2 image
 IMAGE="$REGION-docker.pkg.dev/$PROJECT_ID/$REPO_NAME/hello-app:v2"
